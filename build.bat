@@ -3,7 +3,7 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 
 echo ============================================================
-echo  Screensy Window Audio - Release Build
+echo  Lightone Stream - Release Build
 echo ============================================================
 echo.
 
@@ -51,7 +51,7 @@ echo ============================================================
 echo  BUILD COMPLETE
 echo ============================================================
 echo Output:
-echo   %CD%\dist\%RID%\ScreensyWindowAudio.exe
+echo   %CD%\dist\%RID%\Lightone-Stream.exe
 echo.
 echo The EXE is self-contained for .NET.
 echo Microsoft Edge WebView2 Runtime 141+ is still required.

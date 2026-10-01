@@ -48,7 +48,7 @@ public sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = "LT1 - Screensy - 0.2";
+        Text = "Lightone Stream - 1.0";
         StartPosition = FormStartPosition.CenterScreen;
         Width = 1280;
         Height = 820;
@@ -297,7 +297,7 @@ public sealed class MainForm : Form
             _statusLabel.Text = "Initialization failed";
             MessageBox.Show(
                 ex.ToString(),
-                "Screensy Window Audio - startup error",
+                "Lightone Stream - startup error",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
         }
@@ -511,7 +511,7 @@ public sealed class MainForm : Form
                     {{captureOptions}}
                 };
 
-                console.debug('[Screensy Window Audio] getDisplayMedia options:', merged);
+                console.debug('[Lightone Stream] getDisplayMedia options:', merged);
                 const stream = await original(merged);
 
                 for (const track of stream.getVideoTracks()) {

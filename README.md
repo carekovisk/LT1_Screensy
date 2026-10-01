@@ -1,7 +1,7 @@
 101% vibe coded
 
 
-# Screensy Window Audio
+# Lightone Stream
 
 A minimal Windows wrapper around **https://screensy.marijn.it/** that uses Microsoft Edge WebView2 and changes the screen-capture request before Screensy sees it.
 
@@ -33,7 +33,7 @@ If .NET 8 SDK is not installed, the script downloads Microsoft's official `dotne
 Output:
 
 ```text
-dist\win-x64\ScreensyWindowAudio.exe
+dist\win-x64\Lightone-Stream.exe
 ```
 
 For Windows on ARM:
@@ -44,7 +44,7 @@ build.bat arm64
 
 ## Usage
 
-1. Run `ScreensyWindowAudio.exe`.
+1. Run `Lightone-Stream.exe`.
 2. Leave **Audio: Window only** selected.
 3. Click Screensy's normal **Start sharing** button.
 4. In the WebView2/Edge picker, select **Window** and then the game/application.
