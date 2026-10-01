@@ -315,12 +315,13 @@ public sealed class MainForm : Form
     {
         var qualityJson = QualityJson(quality);
 
+        // "audio: requestedAudio" keeps the page's own audio constraints (e.g. Screensy and
+        // LT1 Direct disable noise suppression / echo cancellation) instead of replacing them.
         var captureOptions = mode switch
         {
-            AudioMode.WindowOnly => "audio: true, windowAudio: 'window', systemAudio: 'exclude'",
-            AudioMode.SystemAudio => "audio: true, windowAudio: 'system', systemAudio: 'include'",
+            AudioMode.SystemAudio => "audio: requestedAudio, windowAudio: 'system', systemAudio: 'include'",
             AudioMode.NoAudio => "audio: false, windowAudio: 'exclude', systemAudio: 'exclude'",
-            _ => "audio: true, windowAudio: 'window', systemAudio: 'exclude'"
+            _ => "audio: requestedAudio, windowAudio: 'window', systemAudio: 'exclude'"
         };
 
         return $$"""
@@ -343,8 +344,13 @@ public sealed class MainForm : Form
 
             // ---- Quality presets -------------------------------------------------
             let quality = {{qualityJson}};
-            let qualityTouched = quality !== null; // once changed, Padrão must undo overrides
             const videoTracks = new Set();
+
+            // Sender baseline (same values Screensy sets itself). Without an explicit
+            // maxBitrate, Chromium's bandwidth estimate never probes upward and screen
+            // shares stay stuck around 600 kbps / 320x180 even on a fast network.
+            const BASELINE_VIDEO_MAX_BITRATE = 100000000; // 100 Mbps = effectively uncapped
+            const AUDIO_MAX_BITRATE = 960000;             // Opus default is only ~32 kbps
             const peerConnections = new Set();
 
             const post = (message) => {
@@ -376,25 +382,27 @@ public sealed class MainForm : Form
             const setSenderParameters = async (sender, withDegradation) => {
                 const p = sender.getParameters();
                 if (!p.encodings || p.encodings.length === 0) return;
+                const isVideo = sender.track.kind === 'video';
                 for (const enc of p.encodings) {
-                    if (quality) {
+                    if (!isVideo) {
+                        enc.maxBitrate = AUDIO_MAX_BITRATE;
+                    } else if (quality) {
                         enc.maxBitrate = quality.maxBitrate;
                         enc.maxFramerate = quality.fps;
                     } else {
-                        delete enc.maxBitrate;
+                        enc.maxBitrate = BASELINE_VIDEO_MAX_BITRATE;
                         delete enc.maxFramerate;
                     }
                 }
-                if (withDegradation && quality) p.degradationPreference = quality.degradation;
+                if (isVideo && withDegradation && quality) p.degradationPreference = quality.degradation;
                 else delete p.degradationPreference;
                 await sender.setParameters(p);
             };
 
             const applyToPeerConnection = async (pc) => {
                 if (pc.connectionState === 'closed') { peerConnections.delete(pc); return; }
-                if (!qualityTouched) return;
                 for (const sender of pc.getSenders()) {
-                    if (!sender.track || sender.track.kind !== 'video') continue;
+                    if (!sender.track) continue;
                     try { await setSenderParameters(sender, true); }
                     catch {
                         // Older runtimes may reject degradationPreference; retry without it.
@@ -426,7 +434,6 @@ public sealed class MainForm : Form
             // Called by the wrapper when the preset changes: applies live, no reload.
             window.__lt1SetQuality = async (q) => {
                 quality = q;
-                if (q) qualityTouched = true;
                 for (const track of [...videoTracks]) await applyToTrack(track);
                 for (const pc of [...peerConnections]) await applyToPeerConnection(pc);
                 reportCapture();
@@ -440,6 +447,8 @@ public sealed class MainForm : Form
                 if (quality && video !== false) {
                     video = { ...(typeof video === 'object' ? video : {}), ...videoConstraints(quality) };
                 }
+
+                const requestedAudio = (requested.audio && typeof requested.audio === 'object') ? requested.audio : true;
 
                 const merged = {
                     ...requested,
@@ -616,11 +625,13 @@ public sealed class MainForm : Form
 
     private void InitializeComponent()
     {
+        System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(MainForm));
         SuspendLayout();
         // 
         // MainForm
         // 
         ClientSize = new Size(282, 253);
+        Icon = (Icon)resources.GetObject("$this.Icon");
         Name = "MainForm";
         Load += MainForm_Load;
         ResumeLayout(false);
