@@ -49,7 +49,7 @@ public sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = "Lightone Stream - 1.0.1";
+        Text = "Lightone Stream - 1.0.2";
         StartPosition = FormStartPosition.CenterScreen;
         Width = 1280;
         Height = 820;
