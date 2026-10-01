@@ -84,6 +84,23 @@
   // The Worker (cloudflare/turn-worker.js) returns short-lived Cloudflare TURN credentials.
   const TURN_ENDPOINT = 'https://lightone-turn.carekovisk.workers.dev/';
 
+  // Firefox warns that 5+ STUN/TURN URLs slow discovery (it took ~11 s with all of them).
+  // Keep one STUN, TURN over UDP (fastest) and TURN over TLS 443 (passes most firewalls).
+  const KEEP_ICE_URL = /^stun:|^turn:.*:3478\?transport=udp$|^turns:.*:443\?transport=tcp$/;
+  const trimIceServers = (iceServers) => {
+    let stunKept = false;
+    const trimmed = iceServers.map(server => ({
+      ...server,
+      urls: [].concat(server.urls).filter(url => {
+        if (!KEEP_ICE_URL.test(url)) return false;
+        if (!url.startsWith('stun:')) return true;
+        return stunKept ? false : (stunKept = true);
+      })
+    })).filter(server => server.urls.length > 0);
+    // If Cloudflare ever renames its URLs, use them all rather than lose the relay.
+    return trimmed.some(s => s.urls.some(u => /^turns?:/.test(u))) ? trimmed : iceServers;
+  };
+
   // Started right away so it overlaps page setup; on any failure we fall back to STUN only.
   const turnServersPromise = (async () => {
     if (!TURN_ENDPOINT) return [];
@@ -91,7 +108,7 @@
       const res = await fetch(TURN_ENDPOINT, { signal: AbortSignal.timeout(4000), cache: 'no-store' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const { iceServers } = await res.json();
-      return Array.isArray(iceServers) ? iceServers : [];
+      return Array.isArray(iceServers) ? trimIceServers(iceServers) : [];
     } catch (e) {
       console.warn('[LT1] TURN unavailable, direct connections only', e);
       return [];
@@ -135,7 +152,14 @@
   $('room').textContent = '#' + roomId;
   document.title = (isBroadcaster ? 'Transmitindo' : 'Assistindo') + ' — ' + roomId;
 
-  const room = joinRoom({ appId: APP_ID, turnConfig: await turnServersPromise }, roomId, {
+  const turnServers = await turnServersPromise;
+  postToWrapper({ type: 'turn', servers: turnServers.length });
+
+  // rtcConfig.iceServers replaces Trystero's 4 default STUN servers instead of adding to them.
+  const roomConfig = turnServers.length
+    ? { appId: APP_ID, rtcConfig: { iceServers: turnServers } }
+    : { appId: APP_ID };
+  const room = joinRoom(roomConfig, roomId, {
     onJoinError: ({ peerId, error }) => {
       console.warn('[LT1] join error', peerId, error);
       // Viewers also mesh with each other, so the failed peer may not be the broadcaster;
