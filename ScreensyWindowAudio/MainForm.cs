@@ -28,6 +28,7 @@ public sealed class MainForm : Form
     private readonly ComboBox _qualityMode = new();
     private readonly ToolStripStatusLabel _runtimeLabel = new();
     private readonly ToolStripStatusLabel _statusLabel = new();
+    private readonly ToolStripStatusLabel _turnLabel = new(); // LT1 Direct relay availability
     private readonly Button _reloadButton = new();
     private readonly Button _copyShareLinkButton = new();
     private readonly Button _openBrowserButton = new();
@@ -168,6 +169,9 @@ public sealed class MainForm : Form
         var statusBar = new StatusStrip { SizingGrip = false };
         statusBar.Items.Add(_runtimeLabel);
         statusBar.Items.Add(_statusLabel);
+        _turnLabel.Spring = true;
+        _turnLabel.TextAlign = ContentAlignment.MiddleRight;
+        statusBar.Items.Add(_turnLabel);
 
         // Custom address row (below the toolbar): label + address box (stretches) + Go.
         _customBar.Dock = DockStyle.Top;
@@ -288,7 +292,9 @@ public sealed class MainForm : Form
             await _webView.EnsureCoreWebView2Async();
 
             var core = _webView.CoreWebView2;
-            core.Settings.AreDevToolsEnabled = false;
+            // F12 stays off for normal use; "Lightone-Stream.exe --devtools" enables it for debugging.
+            core.Settings.AreDevToolsEnabled = Environment.GetCommandLineArgs()
+                .Any(a => a.Equals("--devtools", StringComparison.OrdinalIgnoreCase));
             core.Settings.AreDefaultContextMenusEnabled = true;
             core.Settings.IsStatusBarEnabled = true;
             core.Settings.IsZoomControlEnabled = true;
@@ -574,6 +580,7 @@ public sealed class MainForm : Form
     private void Core_NavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
     {
         _statusLabel.Text = "Loading...";
+        _turnLabel.Text = ""; // only LT1 Direct reports it
 
         if (!Uri.TryCreate(e.Uri, UriKind.Absolute, out var uri))
             return;
@@ -615,6 +622,10 @@ public sealed class MainForm : Form
                     break;
                 case "captureEnded":
                     _statusLabel.Text = "Capture stopped";
+                    break;
+                case "turn":
+                    var servers = root.TryGetProperty("servers", out var sp) && sp.ValueKind == System.Text.Json.JsonValueKind.Number ? sp.GetInt32() : 0;
+                    _turnLabel.Text = servers > 0 ? "TURN: OK" : "TURN: unavailable (direct only)";
                     break;
                 case "viewers":
                     var count = root.TryGetProperty("count", out var cp) && cp.ValueKind == System.Text.Json.JsonValueKind.Number ? cp.GetInt32() : 0;
