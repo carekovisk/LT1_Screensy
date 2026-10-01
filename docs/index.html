@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LT1 Direct</title>
+<title>LT1 Stream</title>
 <style>
   :root {
     --bg: #111318;
@@ -36,10 +36,16 @@
     align-items: center; justify-content: center; text-align: center; padding: 16px; pointer-events: none; }
   .overlay > * { pointer-events: auto; }
   .overlay p { margin: 0; color: var(--muted); max-width: 520px; }
-  .volume { display: flex; align-items: center; gap: 6px; }
-  .volume button { padding: 4px 8px; background: transparent; font-size: 18px; line-height: 1; }
-  .volume input { width: 110px; accent-color: var(--accent); cursor: pointer; }
-  .volume span { min-width: 3.2em; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+  /* Viewer player bar: lives inside <main> so it stays visible in fullscreen. */
+  .controls { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 6px;
+    padding: 24px 14px 10px; background: linear-gradient(transparent, rgba(0, 0, 0, .75));
+    transition: opacity .25s; }
+  .controls.idle { opacity: 0; pointer-events: none; }
+  main.idle { cursor: none; }
+  .controls button { padding: 4px 8px; background: transparent; font-size: 20px; line-height: 1; }
+  .controls button:hover { background: rgba(255, 255, 255, .12); }
+  .controls input { width: 120px; accent-color: var(--accent); cursor: pointer; }
+  .controls span { min-width: 3.2em; color: #d6d9e0; font-size: 13px; font-variant-numeric: tabular-nums; }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -48,20 +54,22 @@
   <h1>LT1 Direct</h1>
   <span class="room" id="room"></span>
   <span class="spacer"></span>
-  <div class="volume hidden" id="volumeBox">
-    <button id="muteBtn" title="Mudo (M)" aria-label="Mudo">🔇</button>
-    <input id="volumeSlider" type="range" min="0" max="100" step="1" value="100" aria-label="Volume">
-    <span id="volumeLabel">100%</span>
-  </div>
   <span class="badge" id="status">Conectando...</span>
   <button id="startBtn" class="hidden">Iniciar transmissão</button>
   <button id="stopBtn" class="stop hidden">Parar</button>
 </header>
-<main>
+<main id="player">
   <video id="video" playsinline autoplay muted></video>
   <div class="overlay" id="overlay">
     <p id="message">Conectando...</p>
     <button id="unmuteBtn" class="hidden">🔊 Clique para ativar o som</button>
+  </div>
+  <div class="controls hidden" id="controls">
+    <button id="muteBtn" title="Mudo (M)" aria-label="Mudo">🔇</button>
+    <input id="volumeSlider" type="range" min="0" max="100" step="1" value="100" aria-label="Volume">
+    <span id="volumeLabel">100%</span>
+    <span class="spacer"></span>
+    <button id="fullscreenBtn" title="Tela cheia (F)" aria-label="Tela cheia">⛶</button>
   </div>
 </main>
 
@@ -246,11 +254,6 @@
       renderVolume();
     };
 
-    // "M" toggles mute, like most players.
-    document.addEventListener('keydown', (e) => {
-      if (e.key.toLowerCase() === 'm' && !e.ctrlKey && !e.altKey && !e.metaKey) muteBtn.click();
-    });
-
     unmuteBtn.onclick = () => {
       video.muted = false;
       if (video.volume === 0) video.volume = 0.5;
@@ -258,9 +261,58 @@
       renderVolume();
     };
 
+    // ---- Fullscreen --------------------------------------------------------
+    // The whole player (video + controls) goes fullscreen, so the controls stay usable.
+    const player = $('player'), controls = $('controls'), fullscreenBtn = $('fullscreenBtn');
+
+    const isFullscreen = () => !!document.fullscreenElement;
+
+    const toggleFullscreen = () => {
+      if (isFullscreen()) {
+        document.exitFullscreen().catch(() => { });
+      } else if (player.requestFullscreen) {
+        player.requestFullscreen().catch(() => { });
+      } else if (video.webkitEnterFullscreen) {
+        video.webkitEnterFullscreen(); // iPhone: only the native video player can go fullscreen
+      }
+    };
+
+    document.addEventListener('fullscreenchange', () => {
+      fullscreenBtn.textContent = isFullscreen() ? '🗗' : '⛶';
+      fullscreenBtn.title = isFullscreen() ? 'Sair da tela cheia (F)' : 'Tela cheia (F)';
+    });
+
+    fullscreenBtn.onclick = toggleFullscreen;
+    video.addEventListener('dblclick', toggleFullscreen);
+
+    // Player shortcuts: M = mute, F = fullscreen.
+    document.addEventListener('keydown', (e) => {
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      const key = e.key.toLowerCase();
+      if (key === 'm') muteBtn.click();
+      else if (key === 'f') toggleFullscreen();
+    });
+
+    // Hide the controls (and cursor) after a moment without mouse movement while live.
+    let idleTimer = 0;
+    const wake = () => {
+      controls.classList.remove('idle');
+      player.classList.remove('idle');
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        if (!video.srcObject || controls.matches(':hover')) return;
+        controls.classList.add('idle');
+        player.classList.add('idle');
+      }, 2500);
+    };
+    player.addEventListener('mousemove', wake);
+    player.addEventListener('touchstart', wake, { passive: true });
+    document.addEventListener('keydown', wake);
+
     video.volume = savedVolume / 100; // starts muted anyway (autoplay policy)
-    $('volumeBox').classList.remove('hidden');
+    controls.classList.remove('hidden');
     renderVolume();
+    wake();
 
     waiting();
   }
