@@ -51,8 +51,7 @@ public sealed class MainForm : Form
     {
         // Service selector: fixed list, not editable; picking one navigates to it.
         _urltext.DropDownStyle = ComboBoxStyle.DropDownList;
-        _urltext.Width = 120;
-        _urltext.Margin = new Padding(0, 0, 12, 0);
+        _urltext.Width = 150;
         _urltext.Font = new Font(_urltext.Font, FontStyle.Bold);
         _urltext.Items.AddRange(new object[] { "Lightone", "Screensy" });
         _urltext.SelectedIndex = (int)Service.Lightone;
@@ -62,11 +61,18 @@ public sealed class MainForm : Form
         var toolbar = new FlowLayoutPanel
         {
             Dock = DockStyle.Top,
-            Height = 44,
+            Height = 50,
             FlowDirection = FlowDirection.LeftToRight,
             WrapContents = false,
             Padding = new Padding(8, 7, 8, 5),
             AutoSize = false
+        };
+
+        var serviceLabel = new Label
+        {
+            Text = "Service:",
+            AutoSize = true,
+            Margin = new Padding(0, 7, 5, 0)
         };
 
         var audioLabel = new Label
@@ -80,7 +86,7 @@ public sealed class MainForm : Form
         _audioMode.Width = 150;
         _audioMode.Items.AddRange(new object[]
         {
-            "Window only",
+            "Window/Game only",
             "System audio",
             "No audio"
         });
@@ -122,6 +128,7 @@ public sealed class MainForm : Form
         _reloadButton.Font = boldFont;
         _reloadButton.Margin = new Padding(8, 3, 3, 3);
         _reloadButton.Click += (_, _) => _webView.Reload();
+        _reloadButton.Visible = false;
 
         _copyShareLinkButton.Text = "Copy Share Link";
         _copyShareLinkButton.AutoSize = true;
@@ -134,10 +141,11 @@ public sealed class MainForm : Form
         _openBrowserButton.Click += (_, _) => OpenExternal(ScreensyUrl);
         _openBrowserButton.Visible = false; // Hide this button for now, as it may not be necessary for most users.
 
+        toolbar.Controls.Add(serviceLabel);
         toolbar.Controls.Add(_urltext);
+        toolbar.Controls.Add(_reloadButton);
         toolbar.Controls.Add(audioLabel);
         toolbar.Controls.Add(_audioMode);
-        toolbar.Controls.Add(_reloadButton);
         toolbar.Controls.Add(qualityLabel);
         toolbar.Controls.Add(_qualityMode);
         toolbar.Controls.Add(_copyShareLinkButton);
@@ -519,18 +527,22 @@ public sealed class MainForm : Form
 
     private void CopyShareLink()
     {
-        // The service selector no longer shows the address, so read it from the page itself.
+        var service = (Service)_urltext.SelectedIndex;
+        var expectedHost = new Uri(ServiceUrl(service)).Host;
+
+        // Read the address from the page, but only trust it once the page actually belongs to
+        // the selected service: right after switching, the previous service is still loaded.
         var currentUrl = _webView.CoreWebView2?.Source ?? "";
-        // Screensy and LT1 Direct keep the room in the fragment (#Room).
         Uri.TryCreate(currentUrl, UriKind.Absolute, out var uri);
-        var isDirect = uri is not null && uri.Host.Equals(DirectHost, StringComparison.OrdinalIgnoreCase);
-        var isScreensy = isDirect ||
-                         (uri is not null && uri.Host.Equals("screensy.marijn.it", StringComparison.OrdinalIgnoreCase));
-        if (uri is null || (isScreensy && string.IsNullOrWhiteSpace(uri.Fragment)))
+
+        // Both services keep the room in the fragment (#Room).
+        if (uri is null ||
+            !uri.Host.Equals(expectedHost, StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(uri.Fragment))
         {
             _statusLabel.Text = "Share link is not ready yet";
             MessageBox.Show(
-                "Screensy has not created the room link yet. Wait until the page finishes loading, then try again.",
+                $"{_urltext.SelectedItem} has not created the room link yet. Wait until the page finishes loading, then try again.",
                 "Share link not ready",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
@@ -538,15 +550,13 @@ public sealed class MainForm : Form
         }
 
         // lt1.stream only exists inside this app; friends get the public viewer page instead.
-        if (isDirect)
-            currentUrl = ViewerBaseUrl + uri!.Fragment;
+        if (service == Service.Lightone)
+            currentUrl = ViewerBaseUrl + uri.Fragment;
 
         try
         {
             Clipboard.SetText(currentUrl);
-            _statusLabel.Text = isScreensy
-                ? $"Share link copied: {uri.Fragment.TrimStart('#')}"
-                : "Share link copied";
+            _statusLabel.Text = $"{_urltext.SelectedItem} link copied: {uri.Fragment.TrimStart('#')}";
         }
         catch (Exception ex)
         {
