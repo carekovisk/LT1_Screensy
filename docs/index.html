@@ -79,6 +79,25 @@
   // Must be identical for broadcaster and viewers.
   const APP_ID = 'lt1-screensy-direct-v1';
 
+  // Relay used only when a direct connection is impossible (CGNAT / symmetric NAT).
+  // Trystero ships STUN only, so without this many viewers never connect.
+  // The Worker (cloudflare/turn-worker.js) returns short-lived Cloudflare TURN credentials.
+  const TURN_ENDPOINT = 'https://lightone-turn.carekovisk.workers.dev/';
+
+  // Started right away so it overlaps page setup; on any failure we fall back to STUN only.
+  const turnServersPromise = (async () => {
+    if (!TURN_ENDPOINT) return [];
+    try {
+      const res = await fetch(TURN_ENDPOINT, { signal: AbortSignal.timeout(4000), cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const { iceServers } = await res.json();
+      return Array.isArray(iceServers) ? iceServers : [];
+    } catch (e) {
+      console.warn('[LT1] TURN unavailable, direct connections only', e);
+      return [];
+    }
+  })();
+
   // The wrapper serves this page at https://lt1.stream/ -> broadcaster.
   // Anywhere else (GitHub Pages) -> viewer. "?broadcast" forces broadcaster for testing.
   const isBroadcaster = location.hostname === 'lt1.stream' ||
@@ -116,8 +135,16 @@
   $('room').textContent = '#' + roomId;
   document.title = (isBroadcaster ? 'Transmitindo' : 'Assistindo') + ' — ' + roomId;
 
-  const room = joinRoom({ appId: APP_ID }, roomId, {
-    onJoinError: ({ peerId, error }) => console.warn('[LT1] join error', peerId, error)
+  const room = joinRoom({ appId: APP_ID, turnConfig: await turnServersPromise }, roomId, {
+    onJoinError: ({ peerId, error }) => {
+      console.warn('[LT1] join error', peerId, error);
+      // Viewers also mesh with each other, so the failed peer may not be the broadcaster;
+      // only complain while nothing is playing. onPeerStream clears the message.
+      if (!isBroadcaster && !video.srcObject) {
+        setStatus('Sem conexão');
+        showMessage('Não foi possível conectar à transmissão: a rede bloqueou a conexão direta. Tente recarregar a página ou outra rede.');
+      }
+    }
   });
 
   // Small control channel: the broadcaster tells viewers whether it is live.
