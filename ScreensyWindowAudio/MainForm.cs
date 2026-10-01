@@ -13,7 +13,7 @@ public sealed class MainForm : Form
     // under this virtual host; viewers open the same page from GitHub Pages.
     private const string DirectHost = "lt1.example";
     private const string DirectUrl = "https://" + DirectHost + "/";
-    private const string ViewerBaseUrl = "https://carekovisk.github.io/LT1_Screensy/";
+    private const string ViewerBaseUrl = "https://carekovisk.github.io/lt1_stream/";
 
     private static readonly string[] PresetUrls =
     {
