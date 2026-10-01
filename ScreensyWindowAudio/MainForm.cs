@@ -39,6 +39,11 @@ public sealed class MainForm : Form
     private readonly Button _customGoButton = new();
     private string? _customUrl; // last address confirmed with Enter/Go
 
+    // Service currently loaded, and the last page (room) of each one, so re-selecting the same
+    // service is a no-op and switching back reopens the same room instead of creating a new one.
+    private Service _currentService = Service.Lightone;
+    private readonly Dictionary<Service, string> _lastServiceUrls = new();
+
     private string? _injectedScriptId;
     private bool _initialized;
 
@@ -238,6 +243,21 @@ public sealed class MainForm : Form
         var service = (Service)_urltext.SelectedIndex;
         _customBar.Visible = service == Service.Custom;
 
+        // The combo box also fires when the already-selected item is picked again; reloading
+        // then would drop a live stream for everyone watching.
+        if (service == _currentService)
+        {
+            if (service == Service.Custom)
+            {
+                _customUrlText.Focus();
+                _customUrlText.SelectAll();
+            }
+            return;
+        }
+
+        RememberCurrentPage();
+        _currentService = service;
+
         if (service == Service.Custom)
         {
             _customUrlText.Focus();
@@ -250,7 +270,22 @@ public sealed class MainForm : Form
             return;
         }
 
-        _webView.CoreWebView2?.Navigate(ServiceUrl(service)!);
+        _webView.CoreWebView2?.Navigate(
+            _lastServiceUrls.TryGetValue(service, out var lastUrl) ? lastUrl : ServiceUrl(service)!);
+    }
+
+    // Lightone and Screensy keep the room in the URL fragment (#Room), so the current address
+    // is enough to come back to the same room. Custom already remembers its own address.
+    private void RememberCurrentPage()
+    {
+        if (_currentService == Service.Custom)
+            return;
+
+        var expectedHost = new Uri(ServiceUrl(_currentService)!).Host;
+        if (Uri.TryCreate(_webView.CoreWebView2?.Source, UriKind.Absolute, out var uri) &&
+            uri.Host.Equals(expectedHost, StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(uri.Fragment))
+            _lastServiceUrls[_currentService] = uri.AbsoluteUri;
     }
 
     private void NavigateToCustom()
