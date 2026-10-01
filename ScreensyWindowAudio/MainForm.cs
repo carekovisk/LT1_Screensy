@@ -15,35 +15,24 @@ public sealed class MainForm : Form
     private const string DirectUrl = "https://" + DirectHost + "/";
     private const string ViewerBaseUrl = "https://carekovisk.github.io/lt1_stream/";
 
-    private static readonly string[] PresetUrls =
-    {
-        DirectUrl,
-        "https://screensy.marijn.it/",
-        "https://screensharing.net/"
-    };
-
     // Hosts the embedded browser may navigate to; anything else opens in the default browser.
-    // Hosts typed into the address box are added at runtime.
     private readonly HashSet<string> _allowedHosts = new(StringComparer.OrdinalIgnoreCase)
     {
         DirectHost,
-        "screensy.marijn.it",
-        "screensharing.net"
+        "screensy.marijn.it"
     };
 
     private readonly WebView2 _webView = new();
-    private readonly ComboBox _urltext = new();
-    private readonly Button _go = new();
+    private readonly ComboBox _urltext = new(); // service selector (order must match Service)
     private readonly ComboBox _audioMode = new();
     private readonly ComboBox _qualityMode = new();
-    private readonly Label _runtimeLabel = new();
-    private readonly Label _statusLabel = new();
+    private readonly ToolStripStatusLabel _runtimeLabel = new();
+    private readonly ToolStripStatusLabel _statusLabel = new();
     private readonly Button _reloadButton = new();
     private readonly Button _copyShareLinkButton = new();
     private readonly Button _openBrowserButton = new();
 
     private string? _injectedScriptId;
-    private bool _userEditingUrl;
     private bool _initialized;
 
     public MainForm()
@@ -60,63 +49,16 @@ public sealed class MainForm : Form
 
     private void BuildUi()
     {
-        // Row 1: address box (stretches) + Go button.
-        var addressBar = new TableLayoutPanel
-        {
-            Dock = DockStyle.Top,
-            Height = 38,
-            ColumnCount = 2,
-            RowCount = 1,
-            Padding = new Padding(8, 7, 8, 0)
-        };
-        addressBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        addressBar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-
-        _urltext.DropDownStyle = ComboBoxStyle.DropDown;
-        _urltext.Dock = DockStyle.Fill;
-        _urltext.Margin = new Padding(0, 1, 5, 0);
+        // Service selector: fixed list, not editable; picking one navigates to it.
+        _urltext.DropDownStyle = ComboBoxStyle.DropDownList;
+        _urltext.Width = 120;
+        _urltext.Margin = new Padding(0, 0, 12, 0);
         _urltext.Font = new Font(_urltext.Font, FontStyle.Bold);
-        _urltext.Items.AddRange(PresetUrls);
-        _urltext.Text = DirectUrl;
-        // TextUpdate fires only for user typing, not for programmatic Text changes.
-        _urltext.TextUpdate += (_, _) => _userEditingUrl = true;
-        _urltext.KeyDown += (_, e) =>
-        {
-            if (e.KeyCode != Keys.Escape)
-                return;
-
-            // Discard the edit and show the current page address again.
-            _userEditingUrl = false;
-            _urltext.Text = _webView.CoreWebView2?.Source ?? _urltext.Text;
-            e.SuppressKeyPress = true;
-        };
-        _urltext.KeyDown += (_, e) =>
-        {
-            if (e.KeyCode != Keys.Enter)
-                return;
-
-            e.Handled = true;
-            e.SuppressKeyPress = true; // no "ding"
-            NavigateToAddress();
-        };
-
-        // Picking a preset from the list navigates immediately.
-        // (Text is not updated yet when this fires, so use SelectedItem.)
+        _urltext.Items.AddRange(new object[] { "Lightone", "Screensy" });
+        _urltext.SelectedIndex = (int)Service.Lightone;
         _urltext.SelectionChangeCommitted += (_, _) =>
-        {
-            if (_urltext.SelectedItem is string url)
-                NavigateToAddress(url);
-        };
+            _webView.CoreWebView2?.Navigate(ServiceUrl((Service)_urltext.SelectedIndex));
 
-        _go.Text = "Go";
-        _go.AutoSize = true;
-        _go.Margin = new Padding(0);
-        _go.Click += (_, _) => NavigateToAddress();
-
-        addressBar.Controls.Add(_urltext, 0, 0);
-        addressBar.Controls.Add(_go, 1, 0);
-
-        // Row 2: existing controls.
         var toolbar = new FlowLayoutPanel
         {
             Dock = DockStyle.Top,
@@ -173,12 +115,18 @@ public sealed class MainForm : Form
                 await ApplyQualityAsync();
         };
 
+        var boldFont = new Font(_reloadButton.Font, FontStyle.Bold);
+
         _reloadButton.Text = "Reload";
         _reloadButton.AutoSize = true;
+        _reloadButton.Font = boldFont;
+        _reloadButton.Margin = new Padding(8, 3, 3, 3);
         _reloadButton.Click += (_, _) => _webView.Reload();
 
         _copyShareLinkButton.Text = "Copy Share Link";
         _copyShareLinkButton.AutoSize = true;
+        _copyShareLinkButton.Font = boldFont;
+        _copyShareLinkButton.Margin = new Padding(8, 3, 3, 3);
         _copyShareLinkButton.Click += (_, _) => CopyShareLink();
 
         _openBrowserButton.Text = "Open in Edge";
@@ -186,56 +134,36 @@ public sealed class MainForm : Form
         _openBrowserButton.Click += (_, _) => OpenExternal(ScreensyUrl);
         _openBrowserButton.Visible = false; // Hide this button for now, as it may not be necessary for most users.
 
-        _runtimeLabel.AutoSize = true;
-        _runtimeLabel.Margin = new Padding(14, 7, 0, 0);
-        _runtimeLabel.Text = "WebView2: checking...";
-
-        _statusLabel.AutoSize = true;
-        _statusLabel.Margin = new Padding(14, 7, 0, 0);
-        _statusLabel.Text = "Starting...";
-
+        toolbar.Controls.Add(_urltext);
         toolbar.Controls.Add(audioLabel);
         toolbar.Controls.Add(_audioMode);
+        toolbar.Controls.Add(_reloadButton);
         toolbar.Controls.Add(qualityLabel);
         toolbar.Controls.Add(_qualityMode);
-        toolbar.Controls.Add(_reloadButton);
         toolbar.Controls.Add(_copyShareLinkButton);
         toolbar.Controls.Add(_openBrowserButton);
-        toolbar.Controls.Add(_runtimeLabel);
-        toolbar.Controls.Add(_statusLabel);
+
+        // Bottom status bar: runtime version on the left, current status next to it.
+        _runtimeLabel.Text = "WebView2: checking...";
+        _runtimeLabel.BorderSides = ToolStripStatusLabelBorderSides.Right;
+        _statusLabel.Text = "Starting...";
+        var statusBar = new StatusStrip { SizingGrip = false };
+        statusBar.Items.Add(_runtimeLabel);
+        statusBar.Items.Add(_statusLabel);
 
         _webView.Dock = DockStyle.Fill;
 
-        // Docking order: the last added Top control ends up on top.
+        // Fill must be added first so the docked bars take their space before it.
         Controls.Add(_webView);
         Controls.Add(toolbar);
-        Controls.Add(addressBar);
+        Controls.Add(statusBar);
     }
 
-    private void NavigateToAddress(string? address = null)
+    private static string ServiceUrl(Service service) => service switch
     {
-        var core = _webView.CoreWebView2;
-        if (core is null)
-            return;
-
-        var text = (address ?? _urltext.Text).Trim();
-        if (text.Length == 0)
-            return;
-
-        if (!text.Contains("://"))
-            text = "https://" + text;
-
-        if (!Uri.TryCreate(text, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
-        {
-            _statusLabel.Text = "Invalid address (https only)";
-            return;
-        }
-
-        // The user explicitly asked for this site, so let it load inside the wrapper.
-        _allowedHosts.Add(uri.Host);
-        _userEditingUrl = false; // let the page's address (e.g. #Room) show up again
-        core.Navigate(uri.AbsoluteUri);
-    }
+        Service.Screensy => ScreensyUrl,
+        _ => DirectUrl
+    };
 
     private bool IsAllowedHost(string host) =>
         _allowedHosts.Any(h => host.Equals(h, StringComparison.OrdinalIgnoreCase) ||
@@ -258,12 +186,6 @@ public sealed class MainForm : Form
             core.NavigationCompleted += Core_NavigationCompleted;
             core.NewWindowRequested += Core_NewWindowRequested;
             core.WebMessageReceived += Core_WebMessageReceived;
-            core.SourceChanged += (_, _) =>
-            {
-                // Don't overwrite what the user is typing.
-                if (!_userEditingUrl)
-                    _urltext.Text = core.Source;
-            };
 
             var version = core.Environment.BrowserVersionString;
             _runtimeLabel.Text = $"WebView2: {version}";
@@ -597,8 +519,9 @@ public sealed class MainForm : Form
 
     private void CopyShareLink()
     {
-        var currentUrl = _urltext.Text.Trim();
-        // Screensy and LT1 Direct keep the room in the fragment (#Room); other sites may use path/query.
+        // The service selector no longer shows the address, so read it from the page itself.
+        var currentUrl = _webView.CoreWebView2?.Source ?? "";
+        // Screensy and LT1 Direct keep the room in the fragment (#Room).
         Uri.TryCreate(currentUrl, UriKind.Absolute, out var uri);
         var isDirect = uri is not null && uri.Host.Equals(DirectHost, StringComparison.OrdinalIgnoreCase);
         var isScreensy = isDirect ||
@@ -687,6 +610,13 @@ public sealed class MainForm : Form
 
         if (result == DialogResult.Yes)
             OpenExternal("https://developer.microsoft.com/microsoft-edge/webview2/");
+    }
+
+    // Order must match the items in _urltext.
+    private enum Service
+    {
+        Lightone = 0,
+        Screensy = 1
     }
 
     // Order must match the items in _qualityMode.
