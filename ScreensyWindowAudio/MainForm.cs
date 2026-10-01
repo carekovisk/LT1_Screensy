@@ -9,8 +9,15 @@ public sealed class MainForm : Form
     private const string ScreensyUrl = "https://screensy.marijn.it/";
     private const int MinimumWindowAudioRuntimeMajor = 141;
 
+    // LT1 Direct: docs/index.html is embedded in the exe and served locally to the broadcaster
+    // under this virtual host; viewers open the same page from GitHub Pages.
+    private const string DirectHost = "lt1.example";
+    private const string DirectUrl = "https://" + DirectHost + "/";
+    private const string ViewerBaseUrl = "https://carekovisk.github.io/LT1_Screensy/";
+
     private static readonly string[] PresetUrls =
     {
+        DirectUrl,
         "https://screensy.marijn.it/",
         "https://screensharing.net/"
     };
@@ -19,6 +26,7 @@ public sealed class MainForm : Form
     // Hosts typed into the address box are added at runtime.
     private readonly HashSet<string> _allowedHosts = new(StringComparer.OrdinalIgnoreCase)
     {
+        DirectHost,
         "screensy.marijn.it",
         "screensharing.net"
     };
@@ -69,7 +77,7 @@ public sealed class MainForm : Form
         _urltext.Margin = new Padding(0, 1, 5, 0);
         _urltext.Font = new Font(_urltext.Font, FontStyle.Bold);
         _urltext.Items.AddRange(PresetUrls);
-        _urltext.Text = ScreensyUrl;
+        _urltext.Text = DirectUrl;
         // TextUpdate fires only for user typing, not for programmatic Text changes.
         _urltext.TextUpdate += (_, _) => _userEditingUrl = true;
         _urltext.KeyDown += (_, e) =>
@@ -273,9 +281,12 @@ public sealed class MainForm : Form
                     MessageBoxIcon.Warning);
             }
 
+            core.AddWebResourceRequestedFilter(DirectUrl + "*", CoreWebView2WebResourceContext.All);
+            core.WebResourceRequested += Core_DirectPageRequested;
+
             await InstallCaptureOverrideAsync();
             _initialized = true;
-            core.Navigate(ScreensyUrl);
+            core.Navigate(DirectUrl);
         }
         catch (WebView2RuntimeNotFoundException)
         {
@@ -290,6 +301,26 @@ public sealed class MainForm : Form
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
         }
+    }
+
+    // Serves the embedded broadcaster page for https://lt1.example/ straight from the exe
+    // (no files on disk). Any other path on that host is a 404.
+    private void Core_DirectPageRequested(object? sender, CoreWebView2WebResourceRequestedEventArgs e)
+    {
+        var core = _webView.CoreWebView2;
+        var path = new Uri(e.Request.Uri).AbsolutePath;
+
+        if (path is not ("/" or "/index.html"))
+        {
+            e.Response = core.Environment.CreateWebResourceResponse(null, 404, "Not Found", "");
+            return;
+        }
+
+        var resource = typeof(MainForm).Assembly.GetManifestResourceStream("web.index.html");
+        e.Response = resource is null
+            ? core.Environment.CreateWebResourceResponse(null, 500, "Missing embedded page", "")
+            : core.Environment.CreateWebResourceResponse(
+                resource, 200, "OK", "Content-Type: text/html; charset=utf-8\r\nCache-Control: no-store");
     }
 
     private async Task ReinjectAndReloadAsync()
@@ -543,6 +574,13 @@ public sealed class MainForm : Form
                 case "captureEnded":
                     _statusLabel.Text = "Capture stopped";
                     break;
+                case "viewers":
+                    var count = root.TryGetProperty("count", out var cp) && cp.ValueKind == System.Text.Json.JsonValueKind.Number ? cp.GetInt32() : 0;
+                    var live = root.TryGetProperty("live", out var lp) && lp.ValueKind == System.Text.Json.JsonValueKind.True;
+                    _statusLabel.Text = live
+                        ? $"LIVE - {count} viewer(s)"
+                        : $"Not live - {count} in room";
+                    break;
             }
         }
         catch (System.Text.Json.JsonException)
@@ -560,9 +598,11 @@ public sealed class MainForm : Form
     private void CopyShareLink()
     {
         var currentUrl = _urltext.Text.Trim();
-        // Screensy keeps the room in the fragment (#Room); other sites may use path/query.
-        var isScreensy = Uri.TryCreate(currentUrl, UriKind.Absolute, out var uri) &&
-                         uri.Host.Equals("screensy.marijn.it", StringComparison.OrdinalIgnoreCase);
+        // Screensy and LT1 Direct keep the room in the fragment (#Room); other sites may use path/query.
+        Uri.TryCreate(currentUrl, UriKind.Absolute, out var uri);
+        var isDirect = uri is not null && uri.Host.Equals(DirectHost, StringComparison.OrdinalIgnoreCase);
+        var isScreensy = isDirect ||
+                         (uri is not null && uri.Host.Equals("screensy.marijn.it", StringComparison.OrdinalIgnoreCase));
         if (uri is null || (isScreensy && string.IsNullOrWhiteSpace(uri.Fragment)))
         {
             _statusLabel.Text = "Share link is not ready yet";
@@ -573,6 +613,10 @@ public sealed class MainForm : Form
                 MessageBoxIcon.Information);
             return;
         }
+
+        // lt1.example only exists inside this app; friends get the public viewer page instead.
+        if (isDirect)
+            currentUrl = ViewerBaseUrl + uri!.Fragment;
 
         try
         {
