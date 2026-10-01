@@ -130,10 +130,15 @@ public sealed class MainForm : Form
         _reloadButton.Click += (_, _) => _webView.Reload();
         _reloadButton.Visible = false;
 
+        //_copyShareLinkButton.ImageAlign = ContentAlignment.MiddleLeft;
+        //_copyShareLinkButton.TextImageRelation = TextImageRelation.ImageBeforeText;
+        //_copyShareLinkButton.Image = SystemIcons.Information.ToBitmap();
+        //_copyShareLinkButton.Image = new Bitmap(_copyShareLinkButton.Image, new Size(22, 22));
+
         _copyShareLinkButton.Text = "Copy Share Link";
         _copyShareLinkButton.AutoSize = true;
         _copyShareLinkButton.Font = boldFont;
-        _copyShareLinkButton.Margin = new Padding(8, 3, 3, 3);
+        //_copyShareLinkButton.Margin = new Padding(8, 3, 3, 3);
         _copyShareLinkButton.Click += (_, _) => CopyShareLink();
 
         _openBrowserButton.Text = "Open in Edge";
@@ -158,6 +163,7 @@ public sealed class MainForm : Form
         var statusBar = new StatusStrip { SizingGrip = false };
         statusBar.Items.Add(_runtimeLabel);
         statusBar.Items.Add(_statusLabel);
+
 
         _webView.Dock = DockStyle.Fill;
 
@@ -557,6 +563,13 @@ public sealed class MainForm : Form
         {
             Clipboard.SetText(currentUrl);
             _statusLabel.Text = $"{_urltext.SelectedItem} link copied: {uri.Fragment.TrimStart('#')}";
+
+            MessageBox.Show(
+                $"Link copied: {currentUrl}",
+                "Lightone Stream",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.None);
+
         }
         catch (Exception ex)
         {
@@ -603,6 +616,14 @@ public sealed class MainForm : Form
 
     private void InitializeComponent()
     {
+        SuspendLayout();
+        // 
+        // MainForm
+        // 
+        ClientSize = new Size(282, 253);
+        Name = "MainForm";
+        Load += MainForm_Load;
+        ResumeLayout(false);
 
     }
 
@@ -620,6 +641,11 @@ public sealed class MainForm : Form
 
         if (result == DialogResult.Yes)
             OpenExternal("https://developer.microsoft.com/microsoft-edge/webview2/");
+    }
+
+    private void MainForm_Load(object sender, EventArgs e)
+    {
+
     }
 
     // Order must match the items in _urltext.
