@@ -36,6 +36,10 @@
     align-items: center; justify-content: center; text-align: center; padding: 16px; pointer-events: none; }
   .overlay > * { pointer-events: auto; }
   .overlay p { margin: 0; color: var(--muted); max-width: 520px; }
+  .volume { display: flex; align-items: center; gap: 6px; }
+  .volume button { padding: 4px 8px; background: transparent; font-size: 18px; line-height: 1; }
+  .volume input { width: 110px; accent-color: var(--accent); cursor: pointer; }
+  .volume span { min-width: 3.2em; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -44,6 +48,11 @@
   <h1>LT1 Direct</h1>
   <span class="room" id="room"></span>
   <span class="spacer"></span>
+  <div class="volume hidden" id="volumeBox">
+    <button id="muteBtn" title="Mudo (M)" aria-label="Mudo">🔇</button>
+    <input id="volumeSlider" type="range" min="0" max="100" step="1" value="100" aria-label="Volume">
+    <span id="volumeLabel">100%</span>
+  </div>
   <span class="badge" id="status">Conectando...</span>
   <button id="startBtn" class="hidden">Iniciar transmissão</button>
   <button id="stopBtn" class="stop hidden">Parar</button>
@@ -196,11 +205,62 @@
       }
     };
 
+    // ---- Volume control ------------------------------------------------------
+    const muteBtn = $('muteBtn'), volumeSlider = $('volumeSlider'), volumeLabel = $('volumeLabel');
+    const VOLUME_KEY = 'lt1.volume';
+
+    const savedVolume = (() => {
+      try {
+        const v = parseInt(localStorage.getItem(VOLUME_KEY), 10);
+        return Number.isFinite(v) && v >= 0 && v <= 100 ? v : 100;
+      } catch { return 100; }
+    })();
+
+    const renderVolume = () => {
+      const pct = Math.round(video.volume * 100);
+      volumeSlider.value = String(pct);
+      volumeLabel.textContent = video.muted ? 'mudo' : pct + '%';
+      muteBtn.textContent = video.muted || pct === 0 ? '🔇' : pct < 50 ? '🔉' : '🔊';
+      // Once the viewer unmutes by any means, the big unmute button is no longer needed.
+      if (!video.muted) unmuteBtn.classList.add('hidden');
+    };
+
+    const setVolume = (pct) => {
+      video.volume = pct / 100;
+      video.muted = pct === 0;
+      try { localStorage.setItem(VOLUME_KEY, String(pct)); } catch { }
+      video.play().catch(() => { });
+      renderVolume();
+    };
+
+    volumeSlider.addEventListener('input', () => setVolume(parseInt(volumeSlider.value, 10)));
+
+    muteBtn.onclick = () => {
+      if (video.muted) {
+        // Unmuting at 0% would be silent, so fall back to a sensible level.
+        if (video.volume === 0) setVolume(50);
+        else { video.muted = false; video.play().catch(() => { }); }
+      } else {
+        video.muted = true;
+      }
+      renderVolume();
+    };
+
+    // "M" toggles mute, like most players.
+    document.addEventListener('keydown', (e) => {
+      if (e.key.toLowerCase() === 'm' && !e.ctrlKey && !e.altKey && !e.metaKey) muteBtn.click();
+    });
+
     unmuteBtn.onclick = () => {
       video.muted = false;
+      if (video.volume === 0) video.volume = 0.5;
       video.play().catch(() => { });
-      unmuteBtn.classList.add('hidden');
+      renderVolume();
     };
+
+    video.volume = savedVolume / 100; // starts muted anyway (autoplay policy)
+    $('volumeBox').classList.remove('hidden');
+    renderVolume();
 
     waiting();
   }
