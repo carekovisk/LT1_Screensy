@@ -1,0 +1,9 @@
+.vs/
+.idea/
+.dotnet/
+bin/
+obj/
+dist/
+dotnet-install.ps1
+*.user
+*.suo
