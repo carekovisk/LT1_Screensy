@@ -32,6 +32,12 @@ public sealed class MainForm : Form
     private readonly Button _copyShareLinkButton = new();
     private readonly Button _openBrowserButton = new();
 
+    // Custom service: address row shown only while "Custom" is selected.
+    private readonly TableLayoutPanel _customBar = new();
+    private readonly TextBox _customUrlText = new();
+    private readonly Button _customGoButton = new();
+    private string? _customUrl; // last address confirmed with Enter/Go
+
     private string? _injectedScriptId;
     private bool _initialized;
 
@@ -53,10 +59,9 @@ public sealed class MainForm : Form
         _urltext.DropDownStyle = ComboBoxStyle.DropDownList;
         _urltext.Width = 150;
         _urltext.Font = new Font(_urltext.Font, FontStyle.Bold);
-        _urltext.Items.AddRange(new object[] { "Lightone", "Screensy" });
+        _urltext.Items.AddRange(new object[] { "Lightone", "Screensy", "Custom" });
         _urltext.SelectedIndex = (int)Service.Lightone;
-        _urltext.SelectionChangeCommitted += (_, _) =>
-            _webView.CoreWebView2?.Navigate(ServiceUrl((Service)_urltext.SelectedIndex));
+        _urltext.SelectionChangeCommitted += (_, _) => OnServiceChanged();
 
         var toolbar = new FlowLayoutPanel
         {
@@ -109,12 +114,12 @@ public sealed class MainForm : Form
         _qualityMode.Width = 170;
         _qualityMode.Items.AddRange(new object[]
         {
-            "Fluido (60 fps)",
-            "Nítido (30 fps)",
-            "Padrão",
-            "Leve (720p)"
+            "Max (60 fps)",
+            "High",
+            "Default",
+            "Low"
         });
-        _qualityMode.SelectedIndex = (int)QualityPreset.Padrao;
+        _qualityMode.SelectedIndex = (int)QualityPreset.Default;
         _qualityMode.SelectedIndexChanged += async (_, _) =>
         {
             if (_initialized)
@@ -164,20 +169,112 @@ public sealed class MainForm : Form
         statusBar.Items.Add(_runtimeLabel);
         statusBar.Items.Add(_statusLabel);
 
+        // Custom address row (below the toolbar): label + address box (stretches) + Go.
+        _customBar.Dock = DockStyle.Top;
+        _customBar.Height = 36;
+        _customBar.ColumnCount = 3;
+        _customBar.RowCount = 1;
+        _customBar.Padding = new Padding(8, 0, 8, 6);
+        _customBar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        _customBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        _customBar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        _customBar.Visible = false;
+
+        var customLabel = new Label
+        {
+            Text = "Address:",
+            AutoSize = true,
+            Anchor = AnchorStyles.Left,
+            Margin = new Padding(0, 0, 5, 0)
+        };
+
+        _customUrlText.Dock = DockStyle.Fill;
+        _customUrlText.Font = new Font(_customUrlText.Font, FontStyle.Bold);
+        _customUrlText.PlaceholderText = "https://example.com";
+        _customUrlText.Margin = new Padding(0, 3, 5, 0);
+        _customUrlText.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode != Keys.Enter)
+                return;
+
+            e.Handled = true;
+            e.SuppressKeyPress = true; // no "ding"
+            NavigateToCustom();
+        };
+
+        _customGoButton.Text = "Go";
+        _customGoButton.AutoSize = true;
+        _customGoButton.Font = boldFont;
+        _customGoButton.Margin = new Padding(0, 1, 0, 0);
+        _customGoButton.Click += (_, _) => NavigateToCustom();
+
+        _customBar.Controls.Add(customLabel, 0, 0);
+        _customBar.Controls.Add(_customUrlText, 1, 0);
+        _customBar.Controls.Add(_customGoButton, 2, 0);
 
         _webView.Dock = DockStyle.Fill;
 
-        // Fill must be added first so the docked bars take their space before it.
+        // Fill must be added first so the docked bars take their space before it;
+        // among Top bars, the one added last sits on top (toolbar above the custom row).
         Controls.Add(_webView);
+        Controls.Add(_customBar);
         Controls.Add(toolbar);
         Controls.Add(statusBar);
     }
 
-    private static string ServiceUrl(Service service) => service switch
+    private string? ServiceUrl(Service service) => service switch
     {
         Service.Screensy => ScreensyUrl,
+        Service.Custom => _customUrl,
         _ => DirectUrl
     };
+
+    private void OnServiceChanged()
+    {
+        var service = (Service)_urltext.SelectedIndex;
+        _customBar.Visible = service == Service.Custom;
+
+        if (service == Service.Custom)
+        {
+            _customUrlText.Focus();
+            _customUrlText.SelectAll();
+            // Reopen the last custom site, if any; otherwise wait for Enter/Go.
+            if (_customUrl is not null)
+                _webView.CoreWebView2?.Navigate(_customUrl);
+            else
+                _statusLabel.Text = "Type an address and press Enter or Go";
+            return;
+        }
+
+        _webView.CoreWebView2?.Navigate(ServiceUrl(service)!);
+    }
+
+    private void NavigateToCustom()
+    {
+        var core = _webView.CoreWebView2;
+        if (core is null)
+            return;
+
+        var text = _customUrlText.Text.Trim();
+        if (text.Length == 0)
+            return;
+
+        if (!text.Contains("://"))
+            text = "https://" + text;
+
+        // https only: screen capture (getDisplayMedia) and the audio/quality hook need it.
+        if (!Uri.TryCreate(text, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
+        {
+            _statusLabel.Text = "Invalid address (https only)";
+            return;
+        }
+
+        // The user explicitly chose this site, so let it load inside the app.
+        _allowedHosts.Add(uri.Host);
+        _customUrl = uri.AbsoluteUri;
+        _customUrlText.Text = _customUrl;
+        core.Navigate(_customUrl);
+    }
 
     private bool IsAllowedHost(string host) =>
         _allowedHosts.Any(h => host.Equals(h, StringComparison.OrdinalIgnoreCase) ||
@@ -302,12 +399,12 @@ public sealed class MainForm : Form
         _statusLabel.Text = $"Quality: {_qualityMode.SelectedItem}";
     }
 
-    // null = Padrão: leave the site's/browser's defaults untouched.
+    // null = Default: no capture constraints; senders get the uncapped baseline (see hook).
     private static string QualityJson(QualityPreset preset) => preset switch
     {
-        QualityPreset.Fluido => """{"fps":60,"maxWidth":1920,"maxHeight":1080,"maxBitrate":8000000,"contentHint":"motion","degradation":"maintain-framerate"}""",
-        QualityPreset.Nitido => """{"fps":30,"maxWidth":1920,"maxHeight":1080,"maxBitrate":6000000,"contentHint":"detail","degradation":"maintain-resolution"}""",
-        QualityPreset.Leve => """{"fps":30,"maxWidth":1280,"maxHeight":720,"maxBitrate":1500000,"contentHint":"motion","degradation":"balanced"}""",
+        QualityPreset.Max => """{"fps":60,"maxWidth":1920,"maxHeight":1080,"maxBitrate":8000000,"contentHint":"motion","degradation":"maintain-framerate"}""",
+        QualityPreset.High => """{"fps":30,"maxWidth":1920,"maxHeight":1080,"maxBitrate":6000000,"contentHint":"detail","degradation":"maintain-resolution"}""",
+        QualityPreset.Low => """{"fps":30,"maxWidth":1280,"maxHeight":720,"maxBitrate":1500000,"contentHint":"motion","degradation":"balanced"}""",
         _ => "null"
     };
 
@@ -543,17 +640,19 @@ public sealed class MainForm : Form
     private void CopyShareLink()
     {
         var service = (Service)_urltext.SelectedIndex;
-        var expectedHost = new Uri(ServiceUrl(service)).Host;
+        var serviceUrl = ServiceUrl(service); // null for Custom before any Enter/Go
+        var expectedHost = serviceUrl is null ? null : new Uri(serviceUrl).Host;
 
         // Read the address from the page, but only trust it once the page actually belongs to
         // the selected service: right after switching, the previous service is still loaded.
         var currentUrl = _webView.CoreWebView2?.Source ?? "";
         Uri.TryCreate(currentUrl, UriKind.Absolute, out var uri);
 
-        // Both services keep the room in the fragment (#Room).
-        if (uri is null ||
+        // Lightone and Screensy keep the room in the fragment (#Room); a custom site may
+        // use any URL shape, so it only has to be on the chosen host.
+        if (uri is null || expectedHost is null ||
             !uri.Host.Equals(expectedHost, StringComparison.OrdinalIgnoreCase) ||
-            string.IsNullOrWhiteSpace(uri.Fragment))
+            (service != Service.Custom && string.IsNullOrWhiteSpace(uri.Fragment)))
         {
             _statusLabel.Text = "Share link is not ready yet";
             MessageBox.Show(
@@ -571,7 +670,9 @@ public sealed class MainForm : Form
         try
         {
             Clipboard.SetText(currentUrl);
-            _statusLabel.Text = $"{_urltext.SelectedItem} link copied: {uri.Fragment.TrimStart('#')}";
+            _statusLabel.Text = string.IsNullOrWhiteSpace(uri.Fragment)
+                ? $"{_urltext.SelectedItem} link copied"
+                : $"{_urltext.SelectedItem} link copied: {uri.Fragment.TrimStart('#')}";
 
             MessageBox.Show(
                 $"Link copied: {currentUrl}",
@@ -663,16 +764,17 @@ public sealed class MainForm : Form
     private enum Service
     {
         Lightone = 0,
-        Screensy = 1
+        Screensy = 1,
+        Custom = 2
     }
 
     // Order must match the items in _qualityMode.
     private enum QualityPreset
     {
-        Fluido = 0,
-        Nitido = 1,
-        Padrao = 2,
-        Leve = 3
+        Max = 0,
+        High = 1,
+        Default = 2,
+        Low = 3
     }
 
     private enum AudioMode
