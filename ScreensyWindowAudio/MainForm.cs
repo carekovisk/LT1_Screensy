@@ -9,38 +9,41 @@ public sealed class MainForm : Form
     private const string ScreensyUrl = "https://screensy.marijn.it/";
     private const int MinimumWindowAudioRuntimeMajor = 141;
 
-    private static readonly string[] PresetUrls =
-    {
-        "https://screensy.marijn.it/",
-        "https://screensharing.net/"
-    };
+    // LT1 Direct: docs/index.html is embedded in the exe and served locally to the broadcaster
+    // under this virtual host; viewers open the same page from GitHub Pages.
+    private const string DirectHost = "lt1.stream";
+    private const string DirectUrl = "https://" + DirectHost + "/";
+    private const string ViewerBaseUrl = "https://carekovisk.github.io/lt1_stream/";
 
     // Hosts the embedded browser may navigate to; anything else opens in the default browser.
-    // Hosts typed into the address box are added at runtime.
     private readonly HashSet<string> _allowedHosts = new(StringComparer.OrdinalIgnoreCase)
     {
-        "screensy.marijn.it",
-        "screensharing.net"
+        DirectHost,
+        "screensy.marijn.it"
     };
 
     private readonly WebView2 _webView = new();
-    private readonly ComboBox _urltext = new();
-    private readonly Button _go = new();
+    private readonly ComboBox _urltext = new(); // service selector (order must match Service)
     private readonly ComboBox _audioMode = new();
     private readonly ComboBox _qualityMode = new();
-    private readonly Label _runtimeLabel = new();
-    private readonly Label _statusLabel = new();
+    private readonly ToolStripStatusLabel _runtimeLabel = new();
+    private readonly ToolStripStatusLabel _statusLabel = new();
     private readonly Button _reloadButton = new();
     private readonly Button _copyShareLinkButton = new();
     private readonly Button _openBrowserButton = new();
 
+    // Custom service: address row shown only while "Custom" is selected.
+    private readonly TableLayoutPanel _customBar = new();
+    private readonly TextBox _customUrlText = new();
+    private readonly Button _customGoButton = new();
+    private string? _customUrl; // last address confirmed with Enter/Go
+
     private string? _injectedScriptId;
-    private bool _userEditingUrl;
     private bool _initialized;
 
     public MainForm()
     {
-        Text = "LT1 - Screensy - 0.2";
+        Text = "Lightone Stream - 1.0";
         StartPosition = FormStartPosition.CenterScreen;
         Width = 1280;
         Height = 820;
@@ -52,71 +55,29 @@ public sealed class MainForm : Form
 
     private void BuildUi()
     {
-        // Row 1: address box (stretches) + Go button.
-        var addressBar = new TableLayoutPanel
-        {
-            Dock = DockStyle.Top,
-            Height = 38,
-            ColumnCount = 2,
-            RowCount = 1,
-            Padding = new Padding(8, 7, 8, 0)
-        };
-        addressBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        addressBar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-
-        _urltext.DropDownStyle = ComboBoxStyle.DropDown;
-        _urltext.Dock = DockStyle.Fill;
-        _urltext.Margin = new Padding(0, 1, 5, 0);
+        // Service selector: fixed list, not editable; picking one navigates to it.
+        _urltext.DropDownStyle = ComboBoxStyle.DropDownList;
+        _urltext.Width = 150;
         _urltext.Font = new Font(_urltext.Font, FontStyle.Bold);
-        _urltext.Items.AddRange(PresetUrls);
-        _urltext.Text = ScreensyUrl;
-        // TextUpdate fires only for user typing, not for programmatic Text changes.
-        _urltext.TextUpdate += (_, _) => _userEditingUrl = true;
-        _urltext.KeyDown += (_, e) =>
-        {
-            if (e.KeyCode != Keys.Escape)
-                return;
+        _urltext.Items.AddRange(new object[] { "Lightone", "Screensy", "Custom" });
+        _urltext.SelectedIndex = (int)Service.Lightone;
+        _urltext.SelectionChangeCommitted += (_, _) => OnServiceChanged();
 
-            // Discard the edit and show the current page address again.
-            _userEditingUrl = false;
-            _urltext.Text = _webView.CoreWebView2?.Source ?? _urltext.Text;
-            e.SuppressKeyPress = true;
-        };
-        _urltext.KeyDown += (_, e) =>
-        {
-            if (e.KeyCode != Keys.Enter)
-                return;
-
-            e.Handled = true;
-            e.SuppressKeyPress = true; // no "ding"
-            NavigateToAddress();
-        };
-
-        // Picking a preset from the list navigates immediately.
-        // (Text is not updated yet when this fires, so use SelectedItem.)
-        _urltext.SelectionChangeCommitted += (_, _) =>
-        {
-            if (_urltext.SelectedItem is string url)
-                NavigateToAddress(url);
-        };
-
-        _go.Text = "Go";
-        _go.AutoSize = true;
-        _go.Margin = new Padding(0);
-        _go.Click += (_, _) => NavigateToAddress();
-
-        addressBar.Controls.Add(_urltext, 0, 0);
-        addressBar.Controls.Add(_go, 1, 0);
-
-        // Row 2: existing controls.
         var toolbar = new FlowLayoutPanel
         {
             Dock = DockStyle.Top,
-            Height = 44,
+            Height = 50,
             FlowDirection = FlowDirection.LeftToRight,
             WrapContents = false,
             Padding = new Padding(8, 7, 8, 5),
             AutoSize = false
+        };
+
+        var serviceLabel = new Label
+        {
+            Text = "Service:",
+            AutoSize = true,
+            Margin = new Padding(0, 7, 5, 0)
         };
 
         var audioLabel = new Label
@@ -130,7 +91,7 @@ public sealed class MainForm : Form
         _audioMode.Width = 150;
         _audioMode.Items.AddRange(new object[]
         {
-            "Window only",
+            "Window/Game only",
             "System audio",
             "No audio"
         });
@@ -153,24 +114,36 @@ public sealed class MainForm : Form
         _qualityMode.Width = 170;
         _qualityMode.Items.AddRange(new object[]
         {
-            "Fluido (60 fps)",
-            "Nítido (30 fps)",
-            "Padrão",
-            "Leve (720p)"
+            "Max (60 fps)",
+            "High",
+            "Default",
+            "Low"
         });
-        _qualityMode.SelectedIndex = (int)QualityPreset.Padrao;
+        _qualityMode.SelectedIndex = (int)QualityPreset.Default;
         _qualityMode.SelectedIndexChanged += async (_, _) =>
         {
             if (_initialized)
                 await ApplyQualityAsync();
         };
 
+        var boldFont = new Font(_reloadButton.Font, FontStyle.Bold);
+
         _reloadButton.Text = "Reload";
         _reloadButton.AutoSize = true;
+        _reloadButton.Font = boldFont;
+        _reloadButton.Margin = new Padding(8, 3, 3, 3);
         _reloadButton.Click += (_, _) => _webView.Reload();
+        _reloadButton.Visible = false;
+
+        //_copyShareLinkButton.ImageAlign = ContentAlignment.MiddleLeft;
+        //_copyShareLinkButton.TextImageRelation = TextImageRelation.ImageBeforeText;
+        //_copyShareLinkButton.Image = SystemIcons.Information.ToBitmap();
+        //_copyShareLinkButton.Image = new Bitmap(_copyShareLinkButton.Image, new Size(22, 22));
 
         _copyShareLinkButton.Text = "Copy Share Link";
         _copyShareLinkButton.AutoSize = true;
+        _copyShareLinkButton.Font = boldFont;
+        //_copyShareLinkButton.Margin = new Padding(8, 3, 3, 3);
         _copyShareLinkButton.Click += (_, _) => CopyShareLink();
 
         _openBrowserButton.Text = "Open in Edge";
@@ -178,55 +151,129 @@ public sealed class MainForm : Form
         _openBrowserButton.Click += (_, _) => OpenExternal(ScreensyUrl);
         _openBrowserButton.Visible = false; // Hide this button for now, as it may not be necessary for most users.
 
-        _runtimeLabel.AutoSize = true;
-        _runtimeLabel.Margin = new Padding(14, 7, 0, 0);
-        _runtimeLabel.Text = "WebView2: checking...";
-
-        _statusLabel.AutoSize = true;
-        _statusLabel.Margin = new Padding(14, 7, 0, 0);
-        _statusLabel.Text = "Starting...";
-
+        toolbar.Controls.Add(serviceLabel);
+        toolbar.Controls.Add(_urltext);
+        toolbar.Controls.Add(_reloadButton);
         toolbar.Controls.Add(audioLabel);
         toolbar.Controls.Add(_audioMode);
         toolbar.Controls.Add(qualityLabel);
         toolbar.Controls.Add(_qualityMode);
-        toolbar.Controls.Add(_reloadButton);
         toolbar.Controls.Add(_copyShareLinkButton);
         toolbar.Controls.Add(_openBrowserButton);
-        toolbar.Controls.Add(_runtimeLabel);
-        toolbar.Controls.Add(_statusLabel);
+
+        // Bottom status bar: runtime version on the left, current status next to it.
+        _runtimeLabel.Text = "WebView2: checking...";
+        _runtimeLabel.BorderSides = ToolStripStatusLabelBorderSides.Right;
+        _statusLabel.Text = "Starting...";
+        var statusBar = new StatusStrip { SizingGrip = false };
+        statusBar.Items.Add(_runtimeLabel);
+        statusBar.Items.Add(_statusLabel);
+
+        // Custom address row (below the toolbar): label + address box (stretches) + Go.
+        _customBar.Dock = DockStyle.Top;
+        _customBar.Height = 36;
+        _customBar.ColumnCount = 3;
+        _customBar.RowCount = 1;
+        _customBar.Padding = new Padding(8, 0, 8, 6);
+        _customBar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        _customBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        _customBar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        _customBar.Visible = false;
+
+        var customLabel = new Label
+        {
+            Text = "Address:",
+            AutoSize = true,
+            Anchor = AnchorStyles.Left,
+            Margin = new Padding(0, 0, 5, 0)
+        };
+
+        _customUrlText.Dock = DockStyle.Fill;
+        _customUrlText.Font = new Font(_customUrlText.Font, FontStyle.Bold);
+        _customUrlText.PlaceholderText = "https://example.com";
+        _customUrlText.Margin = new Padding(0, 3, 5, 0);
+        _customUrlText.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode != Keys.Enter)
+                return;
+
+            e.Handled = true;
+            e.SuppressKeyPress = true; // no "ding"
+            NavigateToCustom();
+        };
+
+        _customGoButton.Text = "Go";
+        _customGoButton.AutoSize = true;
+        _customGoButton.Font = boldFont;
+        _customGoButton.Margin = new Padding(0, 1, 0, 0);
+        _customGoButton.Click += (_, _) => NavigateToCustom();
+
+        _customBar.Controls.Add(customLabel, 0, 0);
+        _customBar.Controls.Add(_customUrlText, 1, 0);
+        _customBar.Controls.Add(_customGoButton, 2, 0);
 
         _webView.Dock = DockStyle.Fill;
 
-        // Docking order: the last added Top control ends up on top.
+        // Fill must be added first so the docked bars take their space before it;
+        // among Top bars, the one added last sits on top (toolbar above the custom row).
         Controls.Add(_webView);
+        Controls.Add(_customBar);
         Controls.Add(toolbar);
-        Controls.Add(addressBar);
+        Controls.Add(statusBar);
     }
 
-    private void NavigateToAddress(string? address = null)
+    private string? ServiceUrl(Service service) => service switch
+    {
+        Service.Screensy => ScreensyUrl,
+        Service.Custom => _customUrl,
+        _ => DirectUrl
+    };
+
+    private void OnServiceChanged()
+    {
+        var service = (Service)_urltext.SelectedIndex;
+        _customBar.Visible = service == Service.Custom;
+
+        if (service == Service.Custom)
+        {
+            _customUrlText.Focus();
+            _customUrlText.SelectAll();
+            // Reopen the last custom site, if any; otherwise wait for Enter/Go.
+            if (_customUrl is not null)
+                _webView.CoreWebView2?.Navigate(_customUrl);
+            else
+                _statusLabel.Text = "Type an address and press Enter or Go";
+            return;
+        }
+
+        _webView.CoreWebView2?.Navigate(ServiceUrl(service)!);
+    }
+
+    private void NavigateToCustom()
     {
         var core = _webView.CoreWebView2;
         if (core is null)
             return;
 
-        var text = (address ?? _urltext.Text).Trim();
+        var text = _customUrlText.Text.Trim();
         if (text.Length == 0)
             return;
 
         if (!text.Contains("://"))
             text = "https://" + text;
 
+        // https only: screen capture (getDisplayMedia) and the audio/quality hook need it.
         if (!Uri.TryCreate(text, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
         {
             _statusLabel.Text = "Invalid address (https only)";
             return;
         }
 
-        // The user explicitly asked for this site, so let it load inside the wrapper.
+        // The user explicitly chose this site, so let it load inside the app.
         _allowedHosts.Add(uri.Host);
-        _userEditingUrl = false; // let the page's address (e.g. #Room) show up again
-        core.Navigate(uri.AbsoluteUri);
+        _customUrl = uri.AbsoluteUri;
+        _customUrlText.Text = _customUrl;
+        core.Navigate(_customUrl);
     }
 
     private bool IsAllowedHost(string host) =>
@@ -250,12 +297,6 @@ public sealed class MainForm : Form
             core.NavigationCompleted += Core_NavigationCompleted;
             core.NewWindowRequested += Core_NewWindowRequested;
             core.WebMessageReceived += Core_WebMessageReceived;
-            core.SourceChanged += (_, _) =>
-            {
-                // Don't overwrite what the user is typing.
-                if (!_userEditingUrl)
-                    _urltext.Text = core.Source;
-            };
 
             var version = core.Environment.BrowserVersionString;
             _runtimeLabel.Text = $"WebView2: {version}";
@@ -273,9 +314,12 @@ public sealed class MainForm : Form
                     MessageBoxIcon.Warning);
             }
 
+            core.AddWebResourceRequestedFilter(DirectUrl + "*", CoreWebView2WebResourceContext.All);
+            core.WebResourceRequested += Core_DirectPageRequested;
+
             await InstallCaptureOverrideAsync();
             _initialized = true;
-            core.Navigate(ScreensyUrl);
+            core.Navigate(DirectUrl);
         }
         catch (WebView2RuntimeNotFoundException)
         {
@@ -286,10 +330,30 @@ public sealed class MainForm : Form
             _statusLabel.Text = "Initialization failed";
             MessageBox.Show(
                 ex.ToString(),
-                "Screensy Window Audio - startup error",
+                "Lightone Stream - startup error",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
         }
+    }
+
+    // Serves the embedded broadcaster page for https://lt1.stream/ straight from the exe
+    // (no files on disk). Any other path on that host is a 404.
+    private void Core_DirectPageRequested(object? sender, CoreWebView2WebResourceRequestedEventArgs e)
+    {
+        var core = _webView.CoreWebView2;
+        var path = new Uri(e.Request.Uri).AbsolutePath;
+
+        if (path is not ("/" or "/index.html"))
+        {
+            e.Response = core.Environment.CreateWebResourceResponse(null, 404, "Not Found", "");
+            return;
+        }
+
+        var resource = typeof(MainForm).Assembly.GetManifestResourceStream("web.index.html");
+        e.Response = resource is null
+            ? core.Environment.CreateWebResourceResponse(null, 500, "Missing embedded page", "")
+            : core.Environment.CreateWebResourceResponse(
+                resource, 200, "OK", "Content-Type: text/html; charset=utf-8\r\nCache-Control: no-store");
     }
 
     private async Task ReinjectAndReloadAsync()
@@ -335,12 +399,12 @@ public sealed class MainForm : Form
         _statusLabel.Text = $"Quality: {_qualityMode.SelectedItem}";
     }
 
-    // null = Padrão: leave the site's/browser's defaults untouched.
+    // null = Default: no capture constraints; senders get the uncapped baseline (see hook).
     private static string QualityJson(QualityPreset preset) => preset switch
     {
-        QualityPreset.Fluido => """{"fps":60,"maxWidth":1920,"maxHeight":1080,"maxBitrate":8000000,"contentHint":"motion","degradation":"maintain-framerate"}""",
-        QualityPreset.Nitido => """{"fps":30,"maxWidth":1920,"maxHeight":1080,"maxBitrate":6000000,"contentHint":"detail","degradation":"maintain-resolution"}""",
-        QualityPreset.Leve => """{"fps":30,"maxWidth":1280,"maxHeight":720,"maxBitrate":1500000,"contentHint":"motion","degradation":"balanced"}""",
+        QualityPreset.Max => """{"fps":60,"maxWidth":1920,"maxHeight":1080,"maxBitrate":8000000,"contentHint":"motion","degradation":"maintain-framerate"}""",
+        QualityPreset.High => """{"fps":30,"maxWidth":1920,"maxHeight":1080,"maxBitrate":6000000,"contentHint":"detail","degradation":"maintain-resolution"}""",
+        QualityPreset.Low => """{"fps":30,"maxWidth":1280,"maxHeight":720,"maxBitrate":1500000,"contentHint":"motion","degradation":"balanced"}""",
         _ => "null"
     };
 
@@ -348,12 +412,13 @@ public sealed class MainForm : Form
     {
         var qualityJson = QualityJson(quality);
 
+        // "audio: requestedAudio" keeps the page's own audio constraints (e.g. Screensy and
+        // LT1 Direct disable noise suppression / echo cancellation) instead of replacing them.
         var captureOptions = mode switch
         {
-            AudioMode.WindowOnly => "audio: true, windowAudio: 'window', systemAudio: 'exclude'",
-            AudioMode.SystemAudio => "audio: true, windowAudio: 'system', systemAudio: 'include'",
+            AudioMode.SystemAudio => "audio: requestedAudio, windowAudio: 'system', systemAudio: 'include'",
             AudioMode.NoAudio => "audio: false, windowAudio: 'exclude', systemAudio: 'exclude'",
-            _ => "audio: true, windowAudio: 'window', systemAudio: 'exclude'"
+            _ => "audio: requestedAudio, windowAudio: 'window', systemAudio: 'exclude'"
         };
 
         return $$"""
@@ -376,8 +441,13 @@ public sealed class MainForm : Form
 
             // ---- Quality presets -------------------------------------------------
             let quality = {{qualityJson}};
-            let qualityTouched = quality !== null; // once changed, Padrão must undo overrides
             const videoTracks = new Set();
+
+            // Sender baseline (same values Screensy sets itself). Without an explicit
+            // maxBitrate, Chromium's bandwidth estimate never probes upward and screen
+            // shares stay stuck around 600 kbps / 320x180 even on a fast network.
+            const BASELINE_VIDEO_MAX_BITRATE = 100000000; // 100 Mbps = effectively uncapped
+            const AUDIO_MAX_BITRATE = 960000;             // Opus default is only ~32 kbps
             const peerConnections = new Set();
 
             const post = (message) => {
@@ -409,25 +479,27 @@ public sealed class MainForm : Form
             const setSenderParameters = async (sender, withDegradation) => {
                 const p = sender.getParameters();
                 if (!p.encodings || p.encodings.length === 0) return;
+                const isVideo = sender.track.kind === 'video';
                 for (const enc of p.encodings) {
-                    if (quality) {
+                    if (!isVideo) {
+                        enc.maxBitrate = AUDIO_MAX_BITRATE;
+                    } else if (quality) {
                         enc.maxBitrate = quality.maxBitrate;
                         enc.maxFramerate = quality.fps;
                     } else {
-                        delete enc.maxBitrate;
+                        enc.maxBitrate = BASELINE_VIDEO_MAX_BITRATE;
                         delete enc.maxFramerate;
                     }
                 }
-                if (withDegradation && quality) p.degradationPreference = quality.degradation;
+                if (isVideo && withDegradation && quality) p.degradationPreference = quality.degradation;
                 else delete p.degradationPreference;
                 await sender.setParameters(p);
             };
 
             const applyToPeerConnection = async (pc) => {
                 if (pc.connectionState === 'closed') { peerConnections.delete(pc); return; }
-                if (!qualityTouched) return;
                 for (const sender of pc.getSenders()) {
-                    if (!sender.track || sender.track.kind !== 'video') continue;
+                    if (!sender.track) continue;
                     try { await setSenderParameters(sender, true); }
                     catch {
                         // Older runtimes may reject degradationPreference; retry without it.
@@ -459,7 +531,6 @@ public sealed class MainForm : Form
             // Called by the wrapper when the preset changes: applies live, no reload.
             window.__lt1SetQuality = async (q) => {
                 quality = q;
-                if (q) qualityTouched = true;
                 for (const track of [...videoTracks]) await applyToTrack(track);
                 for (const pc of [...peerConnections]) await applyToPeerConnection(pc);
                 reportCapture();
@@ -474,13 +545,15 @@ public sealed class MainForm : Form
                     video = { ...(typeof video === 'object' ? video : {}), ...videoConstraints(quality) };
                 }
 
+                const requestedAudio = (requested.audio && typeof requested.audio === 'object') ? requested.audio : true;
+
                 const merged = {
                     ...requested,
                     video,
                     {{captureOptions}}
                 };
 
-                console.debug('[Screensy Window Audio] getDisplayMedia options:', merged);
+                console.debug('[Lightone Stream] getDisplayMedia options:', merged);
                 const stream = await original(merged);
 
                 for (const track of stream.getVideoTracks()) {
@@ -543,6 +616,13 @@ public sealed class MainForm : Form
                 case "captureEnded":
                     _statusLabel.Text = "Capture stopped";
                     break;
+                case "viewers":
+                    var count = root.TryGetProperty("count", out var cp) && cp.ValueKind == System.Text.Json.JsonValueKind.Number ? cp.GetInt32() : 0;
+                    var live = root.TryGetProperty("live", out var lp) && lp.ValueKind == System.Text.Json.JsonValueKind.True;
+                    _statusLabel.Text = live
+                        ? $"LIVE - {count} viewer(s)"
+                        : $"Not live - {count} in room";
+                    break;
             }
         }
         catch (System.Text.Json.JsonException)
@@ -559,27 +639,47 @@ public sealed class MainForm : Form
 
     private void CopyShareLink()
     {
-        var currentUrl = _urltext.Text.Trim();
-        // Screensy keeps the room in the fragment (#Room); other sites may use path/query.
-        var isScreensy = Uri.TryCreate(currentUrl, UriKind.Absolute, out var uri) &&
-                         uri.Host.Equals("screensy.marijn.it", StringComparison.OrdinalIgnoreCase);
-        if (uri is null || (isScreensy && string.IsNullOrWhiteSpace(uri.Fragment)))
+        var service = (Service)_urltext.SelectedIndex;
+        var serviceUrl = ServiceUrl(service); // null for Custom before any Enter/Go
+        var expectedHost = serviceUrl is null ? null : new Uri(serviceUrl).Host;
+
+        // Read the address from the page, but only trust it once the page actually belongs to
+        // the selected service: right after switching, the previous service is still loaded.
+        var currentUrl = _webView.CoreWebView2?.Source ?? "";
+        Uri.TryCreate(currentUrl, UriKind.Absolute, out var uri);
+
+        // Lightone and Screensy keep the room in the fragment (#Room); a custom site may
+        // use any URL shape, so it only has to be on the chosen host.
+        if (uri is null || expectedHost is null ||
+            !uri.Host.Equals(expectedHost, StringComparison.OrdinalIgnoreCase) ||
+            (service != Service.Custom && string.IsNullOrWhiteSpace(uri.Fragment)))
         {
             _statusLabel.Text = "Share link is not ready yet";
             MessageBox.Show(
-                "Screensy has not created the room link yet. Wait until the page finishes loading, then try again.",
+                $"{_urltext.SelectedItem} has not created the room link yet. Wait until the page finishes loading, then try again.",
                 "Share link not ready",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
             return;
         }
 
+        // lt1.stream only exists inside this app; friends get the public viewer page instead.
+        if (service == Service.Lightone)
+            currentUrl = ViewerBaseUrl + uri.Fragment;
+
         try
         {
             Clipboard.SetText(currentUrl);
-            _statusLabel.Text = isScreensy
-                ? $"Share link copied: {uri.Fragment.TrimStart('#')}"
-                : "Share link copied";
+            _statusLabel.Text = string.IsNullOrWhiteSpace(uri.Fragment)
+                ? $"{_urltext.SelectedItem} link copied"
+                : $"{_urltext.SelectedItem} link copied: {uri.Fragment.TrimStart('#')}";
+
+            MessageBox.Show(
+                $"Link copied!",
+                "Lightone Stream",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.None);
+
         }
         catch (Exception ex)
         {
@@ -626,6 +726,16 @@ public sealed class MainForm : Form
 
     private void InitializeComponent()
     {
+        System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(MainForm));
+        SuspendLayout();
+        // 
+        // MainForm
+        // 
+        ClientSize = new Size(282, 253);
+        Icon = (Icon)resources.GetObject("$this.Icon");
+        Name = "MainForm";
+        Load += MainForm_Load;
+        ResumeLayout(false);
 
     }
 
@@ -645,13 +755,26 @@ public sealed class MainForm : Form
             OpenExternal("https://developer.microsoft.com/microsoft-edge/webview2/");
     }
 
+    private void MainForm_Load(object sender, EventArgs e)
+    {
+
+    }
+
+    // Order must match the items in _urltext.
+    private enum Service
+    {
+        Lightone = 0,
+        Screensy = 1,
+        Custom = 2
+    }
+
     // Order must match the items in _qualityMode.
     private enum QualityPreset
     {
-        Fluido = 0,
-        Nitido = 1,
-        Padrao = 2,
-        Leve = 3
+        Max = 0,
+        High = 1,
+        Default = 2,
+        Low = 3
     }
 
     private enum AudioMode
