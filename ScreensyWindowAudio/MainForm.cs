@@ -11,7 +11,7 @@ public sealed class MainForm : Form
 
     // LT1 Direct: docs/index.html is embedded in the exe and served locally to the broadcaster
     // under this virtual host; viewers open the same page from GitHub Pages.
-    private const string DirectHost = "lt1.example";
+    private const string DirectHost = "lt1.stream";
     private const string DirectUrl = "https://" + DirectHost + "/";
     private const string ViewerBaseUrl = "https://carekovisk.github.io/lt1_stream/";
 
@@ -303,7 +303,7 @@ public sealed class MainForm : Form
         }
     }
 
-    // Serves the embedded broadcaster page for https://lt1.example/ straight from the exe
+    // Serves the embedded broadcaster page for https://lt1.stream/ straight from the exe
     // (no files on disk). Any other path on that host is a 404.
     private void Core_DirectPageRequested(object? sender, CoreWebView2WebResourceRequestedEventArgs e)
     {
@@ -614,7 +614,7 @@ public sealed class MainForm : Form
             return;
         }
 
-        // lt1.example only exists inside this app; friends get the public viewer page instead.
+        // lt1.stream only exists inside this app; friends get the public viewer page instead.
         if (isDirect)
             currentUrl = ViewerBaseUrl + uri!.Fragment;
 

@@ -62,9 +62,9 @@
   // Must be identical for broadcaster and viewers.
   const APP_ID = 'lt1-screensy-direct-v1';
 
-  // The wrapper serves this page at https://lt1.example/ -> broadcaster.
+  // The wrapper serves this page at https://lt1.stream/ -> broadcaster.
   // Anywhere else (GitHub Pages) -> viewer. "?broadcast" forces broadcaster for testing.
-  const isBroadcaster = location.hostname === 'lt1.example' ||
+  const isBroadcaster = location.hostname === 'lt1.stream' ||
     new URLSearchParams(location.search).has('broadcast');
 
   const $ = (id) => document.getElementById(id);
