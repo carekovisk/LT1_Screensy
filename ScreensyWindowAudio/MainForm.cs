@@ -324,7 +324,19 @@ public sealed class MainForm : Form
         try
         {
             _statusLabel.Text = "Initializing WebView2...";
-            await _webView.EnsureCoreWebView2Async();
+            // The app is a broadcaster: while minimized, Chromium would treat the page as hidden and
+            // throttle its timers (down to once a minute after ~5 min), so viewers joining later
+            // time out before the page answers them. Keep it running at full speed instead.
+            var options = new CoreWebView2EnvironmentOptions
+            {
+                AdditionalBrowserArguments = string.Join(' ',
+                    "--disable-background-timer-throttling",
+                    "--disable-renderer-backgrounding",
+                    "--disable-backgrounding-occluded-windows",
+                    "--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling")
+            };
+            var environment = await CoreWebView2Environment.CreateAsync(null, null, options);
+            await _webView.EnsureCoreWebView2Async(environment);
 
             var core = _webView.CoreWebView2;
             // F12 stays off for normal use; "Lightone-Stream.exe --devtools" enables it for debugging.
