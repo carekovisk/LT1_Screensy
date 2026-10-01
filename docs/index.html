@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LT1 Stream</title>
+<title>LT1</title>
 <style>
   :root {
     --bg: #111318;
@@ -51,7 +51,7 @@
 </head>
 <body>
 <header>
-  <h1>LT1 Direct</h1>
+  <h1>LT1</h1>
   <span class="room" id="room"></span>
   <span class="spacer"></span>
   <span class="badge" id="status">Conectando...</span>
@@ -65,7 +65,7 @@
     <button id="unmuteBtn" class="hidden">🔊 Clique para ativar o som</button>
   </div>
   <div class="controls hidden" id="controls">
-    <button id="muteBtn" title="Mudo (M)" aria-label="Mudo">🔇</button>
+    <button id="muteBtn" title="Mute (M)" aria-label="Mute">🔇</button>
     <input id="volumeSlider" type="range" min="0" max="100" step="1" value="100" aria-label="Volume">
     <span id="volumeLabel">100%</span>
     <span class="spacer"></span>
@@ -231,7 +231,7 @@
     const renderVolume = () => {
       const pct = Math.round(video.volume * 100);
       volumeSlider.value = String(pct);
-      volumeLabel.textContent = video.muted ? 'mudo' : pct + '%';
+      volumeLabel.textContent = video.muted ? 'muted' : pct + '%';
       muteBtn.textContent = video.muted || pct === 0 ? '🔇' : pct < 50 ? '🔉' : '🔊';
       // Once the viewer unmutes by any means, the big unmute button is no longer needed.
       if (!video.muted) unmuteBtn.classList.add('hidden');

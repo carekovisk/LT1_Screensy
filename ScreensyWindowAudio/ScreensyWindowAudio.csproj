@@ -21,11 +21,18 @@
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>
     <ApplicationIcon>d11571c44e4eb5d431682133e5933c9d.ico</ApplicationIcon>
+    <PackageIcon>d11571c44e4eb5d431682133e5933c9d - Copy.png</PackageIcon>
   </PropertyGroup>
   <ItemGroup>
     <Content Include="d11571c44e4eb5d431682133e5933c9d.ico" />
     <!-- LT1 Direct page: same file is published to GitHub Pages (docs/) for viewers. -->
     <EmbeddedResource Include="..\docs\index.html" LogicalName="web.index.html" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="C:\Users\careka\Pictures\d11571c44e4eb5d431682133e5933c9d - Copy.png">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
   </ItemGroup>
 
   <ItemGroup>

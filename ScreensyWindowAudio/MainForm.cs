@@ -675,7 +675,7 @@ public sealed class MainForm : Form
                 : $"{_urltext.SelectedItem} link copied: {uri.Fragment.TrimStart('#')}";
 
             MessageBox.Show(
-                $"Link copied: {currentUrl}",
+                $"Link copied!",
                 "Lightone Stream",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.None);
